@@ -1,7 +1,9 @@
 using BoomBust.HealthChecks;
 using BoomBust.Logging;
 using FantasyProsScrape.Configuration;
+using FantasyProsScrape.Jobs;
 using FantasyProsScrape.Services;
+using FantasyProsScrape.Services.Repositories;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Http.Resilience;
@@ -82,6 +84,12 @@ try
         });
     });
 
+    // Read-only repositories PlayerResolver / RankDiffer need. RankRepository is not called by
+    // FantasyProsRanksJob yet (FEAT-7 dry-run diffs against an empty existing set); it is wired up
+    // and ready for FEAT-8's write-enabled job.
+    builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
+    builder.Services.AddScoped<IRankRepository, RankRepository>();
+
     builder.Services.AddControllers();
     builder.Services.AddHttpClient(); // required by BoomBust.HealthChecks
 
@@ -105,8 +113,32 @@ try
             tags: ["db", "supabase", "ready"],
             timeout: TimeSpan.FromSeconds(10));
 
-    // Quartz. No jobs are registered yet: FantasyProsRanksJob and SeedWeeklyRanksJob land in later tickets.
-    builder.Services.AddQuartz(_ => { });
+    // Quartz. FantasyProsRanksJob (FEAT-7, dry-run mode: resolves and diffs, writes nothing) runs
+    // hourly Tue-Sat and Sun 00:00-11:00 America/Chicago - the window FantasyPros' week never
+    // straddles (it rolls the week after Monday night). SeedWeeklyRanksJob lands in a later ticket.
+    var chicago = TimeZoneInfo.FindSystemTimeZoneById(
+        builder.Configuration["FantasyPros:TimeZone"] ?? "America/Chicago");
+
+    builder.Services.AddQuartz(q =>
+    {
+        var ranksJobKey = new JobKey(FantasyProsRanksJob.JobName);
+        q.AddJob<FantasyProsRanksJob>(opts => opts
+            .WithIdentity(ranksJobKey)
+            .DisallowConcurrentExecution()
+            .StoreDurably());
+
+        q.AddTrigger(opts => opts
+            .ForJob(ranksJobKey)
+            .WithIdentity($"{FantasyProsRanksJob.JobName}-tue-sat-trigger")
+            .WithCronSchedule("0 0 * ? * TUE-SAT", x => x.InTimeZone(chicago))
+            .WithDescription("FantasyPros Ranks - hourly Tue-Sat (America/Chicago)"));
+
+        q.AddTrigger(opts => opts
+            .ForJob(ranksJobKey)
+            .WithIdentity($"{FantasyProsRanksJob.JobName}-sun-trigger")
+            .WithCronSchedule("0 0 0-11 ? * SUN", x => x.InTimeZone(chicago))
+            .WithDescription("FantasyPros Ranks - hourly Sun 00:00-11:00 (America/Chicago)"));
+    });
     builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
     var app = builder.Build();
@@ -172,7 +204,8 @@ try
         string.Join(", ", fantasyProsSettings.Pages.Select(p => p.Position)),
         fantasyProsSettings.Cutoffs.QB, fantasyProsSettings.Cutoffs.RB, fantasyProsSettings.Cutoffs.WR, fantasyProsSettings.Cutoffs.TE,
         fantasyProsSettings.TimeZone);
-    Log.Information("No scheduled jobs registered yet");
+    Log.Information("  {Job}: hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (dry-run, write nothing); POST /api/fantasypros/run to trigger on demand",
+        FantasyProsRanksJob.JobName);
     Log.Information("Health check endpoints: /health, /health/live, /health/ready");
 
     await app.RunAsync();

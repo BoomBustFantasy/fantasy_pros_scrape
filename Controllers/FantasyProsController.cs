@@ -46,7 +46,7 @@ public class FantasyProsController : ControllerBase
 
         return Accepted(new
         {
-            message = $"Triggered {FantasyProsRanksJob.JobName}. This is the dry-run job (FEAT-7): it resolves and logs the diff, it writes nothing. Watch the logs for the per-position summary.",
+            message = $"Triggered {FantasyProsRanksJob.JobName}. It resolves, diffs and writes ranks/history/runs. Watch the logs for the per-position summary.",
             season,
             week,
             positions

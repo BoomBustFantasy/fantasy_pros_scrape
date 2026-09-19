@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="FantasyProsScrape.csproj" />
+  <Project Path="FantasyProsScrape.Tests/FantasyProsScrape.Tests.csproj" />
+</Solution>

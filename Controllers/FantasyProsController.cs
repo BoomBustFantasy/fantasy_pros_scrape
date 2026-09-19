@@ -52,4 +52,35 @@ public class FantasyProsController : ControllerBase
             positions
         });
     }
+
+    /// <summary>
+    /// Triggers <see cref="SeedWeeklyRanksJob"/> now for the given season/week. Returns 202: the job
+    /// runs asynchronously on Quartz's thread pool. If a <c>WeeklyRankSets</c> row already exists for
+    /// this season/week the job logs and exits without touching it - this endpoint does not
+    /// pre-check that, since the check itself belongs to the job's own decision logic.
+    /// This is the exact contract the Boom repo's <c>server/api/ranks/seed.post.ts</c> (FEAT-501)
+    /// and its admin "seed now" button call: <c>POST /api/fantasypros/seed/{season}/{week}</c>, no
+    /// request body.
+    /// </summary>
+    [HttpPost("seed/{season:int}/{week:int}")]
+    public async Task<IActionResult> Seed(int season, int week)
+    {
+        var scheduler = await _schedulerFactory.GetScheduler();
+
+        var dataMap = new JobDataMap();
+        dataMap.Put(SeedWeeklyRanksJob.SeasonDataKey, season);
+        dataMap.Put(SeedWeeklyRanksJob.WeekDataKey, week);
+
+        await scheduler.TriggerJob(new JobKey(SeedWeeklyRanksJob.JobName), dataMap);
+
+        _logger.LogInformation(
+            "Manually triggered {Job} (season={Season}, week={Week})", SeedWeeklyRanksJob.JobName, season, week);
+
+        return Accepted(new
+        {
+            message = $"Triggered {SeedWeeklyRanksJob.JobName}. If a WeeklyRankSets row already exists for this season/week it is left untouched. Watch the logs for the seeded counts.",
+            season,
+            week
+        });
+    }
 }

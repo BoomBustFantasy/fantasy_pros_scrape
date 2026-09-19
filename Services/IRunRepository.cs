@@ -25,4 +25,13 @@ public interface IRunRepository
     /// duplicate-key conflict means someone else's row already is.
     /// </summary>
     Task<bool> InsertRunAsync(FantasyProsRankRun run, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The (season, week) of the single most recent <c>FantasyProsRankRuns</c> row across all
+    /// positions - i.e. whatever FantasyPros is currently serving - or null if no run has ever been
+    /// stored. Used by <see cref="Jobs.SeedWeeklyRanksJob"/> to default the week it seeds when not
+    /// overridden. This is a plain "most recent row" read, unrelated to the payload-hash check
+    /// <see cref="GetLatestPayloadHashAsync"/> does for one season/week/position/scoring.
+    /// </summary>
+    Task<(int Season, int Week)?> GetMostRecentSeasonWeekAsync(CancellationToken cancellationToken = default);
 }

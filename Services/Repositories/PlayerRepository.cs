@@ -5,8 +5,8 @@ using Client = Supabase.Client;
 namespace FantasyProsScrape.Services.Repositories;
 
 /// <summary>
-/// Reads the Players/Positions/Teams rows <see cref="PlayerResolver"/> needs, once per job run.
-/// Read-only: see <see cref="IPlayerRepository"/> for why there is no write method yet.
+/// Reads the Players/Positions/Teams rows <see cref="PlayerResolver"/> needs, once per job run, and
+/// patches <c>fantasy_pros_player_id</c> column-level. See <see cref="IPlayerRepository"/>.
 /// </summary>
 public class PlayerRepository : IPlayerRepository
 {
@@ -60,6 +60,38 @@ public class PlayerRepository : IPlayerRepository
         _logger.LogInformation("Loaded {Count} QB/RB/WR/TE players for resolution", players.Count);
 
         return new PlayerResolutionData(players, positionIdByName, teamIdByAbbreviation);
+    }
+
+    public async Task<bool> PatchFantasyProsPlayerIdAsync(
+        long playerId, int fantasyProsPlayerId, CancellationToken cancellationToken = default)
+    {
+        if (playerId <= 0 || fantasyProsPlayerId <= 0)
+        {
+            _logger.LogWarning(
+                "PatchFantasyProsPlayerIdAsync called with invalid arguments: PlayerId={PlayerId}, FantasyProsPlayerId={FantasyProsPlayerId}",
+                playerId, fantasyProsPlayerId);
+            return false;
+        }
+
+        try
+        {
+            // A column-level PATCH rather than a full-row Update, so a concurrent Sleeper/ESPN
+            // sync can never be overwritten with the stale values this job read a minute ago.
+            await _supabase
+                .From<Player>()
+                .Where(p => p.Id == playerId)
+                .Set(p => p.FantasyProsPlayerId!, fantasyProsPlayerId)
+                .Set(p => p.UpdatedAt!, DateTime.UtcNow)
+                .Update(cancellationToken: cancellationToken);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to set fantasy_pros_player_id={FantasyProsPlayerId} on player {PlayerId}",
+                fantasyProsPlayerId, playerId);
+            return false;
+        }
     }
 
     private async Task<Dictionary<string, long>> LoadSkillPositionIdsAsync(CancellationToken cancellationToken)

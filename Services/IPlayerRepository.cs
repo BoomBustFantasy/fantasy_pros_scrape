@@ -3,9 +3,8 @@ using FantasyProsScrape.Models.Supa;
 namespace FantasyProsScrape.Services;
 
 /// <summary>
-/// Everything <see cref="PlayerResolver"/> needs, loaded once per job run (not once per page).
-/// Read-only for FEAT-7 (S1, dry run): the <c>fantasy_pros_player_id</c> backfill PATCH is
-/// FEAT-8's "enable writes" and does not exist on this interface yet.
+/// Everything <see cref="PlayerResolver"/> needs, loaded once per job run (not once per page), plus
+/// the <c>fantasy_pros_player_id</c> backfill PATCH.
 /// </summary>
 public interface IPlayerRepository
 {
@@ -15,6 +14,16 @@ public interface IPlayerRepository
     /// Supabase team id before calling <see cref="PlayerResolver.Resolve"/>.
     /// </summary>
     Task<PlayerResolutionData> GetSkillPlayersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Column-level PATCH of <c>fantasy_pros_player_id</c> and <c>updated_at</c> for one player -
+    /// never a full-row update, so a concurrent Sleeper/ESPN sync writing sleeper_id/espn_player_id
+    /// on the same row can't be clobbered. Called after <see cref="PlayerResolver.Resolve"/>
+    /// succeeds through a name match rather than the FantasyPros id fast path. Returns false (not
+    /// thrown) on failure; the job logs and moves on rather than failing the run over a backfill.
+    /// </summary>
+    Task<bool> PatchFantasyProsPlayerIdAsync(
+        long playerId, int fantasyProsPlayerId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -5,11 +5,14 @@ using Client = Supabase.Client;
 namespace FantasyProsScrape.Services.Repositories;
 
 /// <summary>
-/// Reads current <c>FantasyProsRanks</c> rows. Registered in DI and ready for FEAT-8; the FEAT-7
-/// dry-run job does not call it (see <see cref="IRankRepository"/>).
+/// Reads and writes <c>FantasyProsRanks</c> and <c>FantasyProsRankHistory</c>. See
+/// <see cref="IRankRepository"/>.
 /// </summary>
 public class RankRepository : IRankRepository
 {
+    /// <summary>The natural key the ranks upsert resolves conflicts on.</summary>
+    private const string RanksConflictColumns = "season,week,position_id,scoring,player_id";
+
     private readonly Client _supabase;
     private readonly ILogger<RankRepository> _logger;
 
@@ -35,5 +38,29 @@ public class RankRepository : IRankRepository
             response.Models.Count, season, week, positionId, scoring);
 
         return response.Models;
+    }
+
+    public async Task<List<FantasyProsRank>> UpsertRanksAsync(
+        IReadOnlyList<FantasyProsRank> rows, CancellationToken cancellationToken = default)
+    {
+        if (rows.Count == 0)
+            return [];
+
+        var response = await _supabase
+            .From<FantasyProsRank>()
+            .Upsert(rows.ToList(), new QueryOptions { OnConflict = RanksConflictColumns }, cancellationToken);
+
+        _logger.LogDebug("Upserted {Count} FantasyProsRanks rows", response.Models.Count);
+        return response.Models;
+    }
+
+    public async Task InsertHistoryAsync(
+        IReadOnlyList<FantasyProsRankHistory> rows, CancellationToken cancellationToken = default)
+    {
+        if (rows.Count == 0)
+            return;
+
+        await _supabase.From<FantasyProsRankHistory>().Insert(rows.ToList(), cancellationToken: cancellationToken);
+        _logger.LogDebug("Inserted {Count} FantasyProsRankHistory rows", rows.Count);
     }
 }

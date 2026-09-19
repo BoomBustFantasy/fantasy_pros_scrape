@@ -84,11 +84,10 @@ try
         });
     });
 
-    // Read-only repositories PlayerResolver / RankDiffer need. RankRepository is not called by
-    // FantasyProsRanksJob yet (FEAT-7 dry-run diffs against an empty existing set); it is wired up
-    // and ready for FEAT-8's write-enabled job.
+    // Repositories PlayerResolver / RankDiffer / FantasyProsRanksJob need to read and write.
     builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
     builder.Services.AddScoped<IRankRepository, RankRepository>();
+    builder.Services.AddScoped<IRunRepository, RunRepository>();
 
     builder.Services.AddControllers();
     builder.Services.AddHttpClient(); // required by BoomBust.HealthChecks
@@ -113,7 +112,7 @@ try
             tags: ["db", "supabase", "ready"],
             timeout: TimeSpan.FromSeconds(10));
 
-    // Quartz. FantasyProsRanksJob (FEAT-7, dry-run mode: resolves and diffs, writes nothing) runs
+    // Quartz. FantasyProsRanksJob (FEAT-8: resolves, diffs and writes ranks/history/runs) runs
     // hourly Tue-Sat and Sun 00:00-11:00 America/Chicago - the window FantasyPros' week never
     // straddles (it rolls the week after Monday night). SeedWeeklyRanksJob lands in a later ticket.
     var chicago = TimeZoneInfo.FindSystemTimeZoneById(
@@ -204,7 +203,7 @@ try
         string.Join(", ", fantasyProsSettings.Pages.Select(p => p.Position)),
         fantasyProsSettings.Cutoffs.QB, fantasyProsSettings.Cutoffs.RB, fantasyProsSettings.Cutoffs.WR, fantasyProsSettings.Cutoffs.TE,
         fantasyProsSettings.TimeZone);
-    Log.Information("  {Job}: hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (dry-run, write nothing); POST /api/fantasypros/run to trigger on demand",
+    Log.Information("  {Job}: hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (writes ranks/history/runs); POST /api/fantasypros/run to trigger on demand",
         FantasyProsRanksJob.JobName);
     Log.Information("Health check endpoints: /health, /health/live, /health/ready");
 

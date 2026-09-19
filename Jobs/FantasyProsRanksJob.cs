@@ -9,13 +9,15 @@ using Quartz;
 namespace FantasyProsScrape.Jobs;
 
 /// <summary>
-/// FEAT-7 (S1): fetches the four FantasyPros rankings pages, parses them, resolves every player
-/// inside the configured cutoff against the Players table, diffs against an empty current set,
-/// and logs one summary line per position. Writes nothing to the database - no repository this
-/// job depends on exposes a write method. See docs/plans/fantasy-pros-ranks-scraper.md,
-/// "FantasyProsRanksJob" and milestone S1.
-///
-/// Writes (ranks/history/run upserts, the fantasy_pros_player_id backfill) land in FEAT-8 (S2).
+/// FEAT-8 (S2): fetches the four FantasyPros rankings pages, parses them, and per position runs the
+/// full read-diff-write sequence: stores the raw payload only when its players-array hash differs
+/// from the latest stored run; loads the current FantasyProsRanks rows for the
+/// season/week/position/scoring; resolves every player inside the configured cutoff plus any player
+/// already tracked this week even if it has since dropped below the cutoff; upserts new/changed/
+/// touched rows in one call; bulk-inserts history rows for new and changed rows; and patches
+/// Players.fantasy_pros_player_id when resolution succeeded through a name match rather than the
+/// FantasyPros id fast path. Logs one summary line per position. See
+/// docs/plans/fantasy-pros-ranks-scraper.md, "FantasyProsRanksJob" and milestone S2.
 /// </summary>
 [DisallowConcurrentExecution]
 public class FantasyProsRanksJob : IJob
@@ -36,17 +38,23 @@ public class FantasyProsRanksJob : IJob
 
     private readonly IFantasyProsSource _source;
     private readonly IPlayerRepository _players;
+    private readonly IRankRepository _ranks;
+    private readonly IRunRepository _runs;
     private readonly FantasyProsSettings _settings;
     private readonly ILogger<FantasyProsRanksJob> _logger;
 
     public FantasyProsRanksJob(
         IFantasyProsSource source,
         IPlayerRepository players,
+        IRankRepository ranks,
+        IRunRepository runs,
         IOptions<FantasyProsSettings> settings,
         ILogger<FantasyProsRanksJob> logger)
     {
         _source = source;
         _players = players;
+        _ranks = ranks;
+        _runs = runs;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -72,7 +80,7 @@ public class FantasyProsRanksJob : IJob
         }
 
         _logger.LogInformation(
-            "Starting FantasyPros ranks dry run (S1: resolve + diff + log, write nothing) for {Pages}",
+            "Starting FantasyPros ranks run (resolve + diff + write) for {Pages}",
             string.Join(", ", pages.Select(p => p.Position)));
 
         PlayerResolutionData resolution;
@@ -114,7 +122,7 @@ public class FantasyProsRanksJob : IJob
             }
         }
 
-        _logger.LogInformation("Completed FantasyPros ranks dry run");
+        _logger.LogInformation("Completed FantasyPros ranks run");
 
         if (hadFailure)
         {
@@ -146,6 +154,17 @@ public class FantasyProsRanksJob : IJob
         var season = seasonOverride ?? ecrPage.Year;
         var week = weekOverride ?? ecrPage.Week;
         var cutoff = _settings.Cutoffs.For(page.Position);
+        var scoring = _settings.Scoring;
+
+        await CaptureRunAsync(ecrPage, season, week, positionId, scoring, cancellationToken);
+
+        var existingRows = await _ranks.GetExistingRanksAsync(season, week, positionId, scoring, cancellationToken);
+
+        // A player already tracked this season/week/position keeps updating even if their ECR has
+        // since dropped below the cutoff, so they don't freeze at their last-seen rank.
+        var alreadyTrackedFpIds = new HashSet<int>(existingRows.Select(r => r.FantasyProsPlayerId));
+
+        var playersById = resolution.Players.ToDictionary(p => p.Id);
 
         var ranked = 0;
         var resolved = new List<ResolvedRank>();
@@ -153,9 +172,7 @@ public class FantasyProsRanksJob : IJob
 
         foreach (var fp in ecrPage.Players)
         {
-            // Dry run: the "existing" set RankDiffer diffs against is always empty (see class docs), so
-            // there is no already-tracked player below the cutoff to keep updating this ticket.
-            if (fp.RankEcr > cutoff)
+            if (fp.RankEcr > cutoff && !alreadyTrackedFpIds.Contains(fp.PlayerId))
                 continue;
 
             ranked++;
@@ -194,17 +211,75 @@ public class FantasyProsRanksJob : IJob
                 StartSitGrade: fp.StartSitGrade,
                 Opponent: fp.PlayerOpponent,
                 OpponentAbbreviation: fp.PlayerOpponentId));
+
+            // The FantasyPros id fast path in PlayerResolver only succeeds when the row's
+            // fantasy_pros_player_id already equals fp.PlayerId, so a resolved player whose loaded
+            // value is null or different got here through a name match - backfill it. Do not patch
+            // players who already had this id: nothing changed for them.
+            if (playersById.TryGetValue(playerId.Value, out var matchedPlayer) && matchedPlayer.FantasyProsPlayerId != fp.PlayerId)
+                await _players.PatchFantasyProsPlayerIdAsync(playerId.Value, fp.PlayerId, cancellationToken);
         }
 
         var diff = RankDiffer.Diff(
-            season, week, positionId, _settings.Scoring,
-            existing: [],
+            season, week, positionId, scoring,
+            existing: existingRows,
             scraped: resolved,
             now: DateTime.UtcNow);
+
+        await WriteDiffAsync(diff, cancellationToken);
 
         _logger.LogInformation(
             "{Position}: {Ranked} ranked, {Resolved} resolved, {New} new, {Moved} moved, {Unresolved} unresolved",
             page.Position, ranked, resolved.Count, diff.NewCount, diff.ChangedCount, unresolved);
+    }
+
+    /// <summary>
+    /// Stores the raw payload only when its players-array hash differs from the latest stored run
+    /// for this season/week/position/scoring. A duplicate-key failure on insert (the unique
+    /// constraint backstopping a race between two concurrent runs computing the same new hash) is
+    /// handled inside <see cref="IRunRepository.InsertRunAsync"/> and is not a failure here.
+    /// </summary>
+    private async Task CaptureRunAsync(
+        EcrPage ecrPage, int season, int week, long positionId, string scoring, CancellationToken cancellationToken)
+    {
+        var payloadHash = PayloadHasher.Hash(ecrPage.PlayersRawJson);
+        var latestHash = await _runs.GetLatestPayloadHashAsync(season, week, positionId, scoring, cancellationToken);
+
+        if (string.Equals(latestHash, payloadHash, StringComparison.Ordinal))
+            return;
+
+        var run = new FantasyProsRankRun
+        {
+            Season = season,
+            Week = week,
+            PositionId = positionId,
+            Scoring = scoring,
+            PayloadHash = payloadHash,
+            Payload = ecrPage.RawJson,
+            TotalExperts = ecrPage.TotalExperts,
+            FpLastUpdated = ecrPage.LastUpdated,
+            FetchedAt = DateTime.UtcNow
+        };
+
+        await _runs.InsertRunAsync(run, cancellationToken);
+    }
+
+    /// <summary>
+    /// Upserts new/changed/touched rows, then inserts history for new/changed rows once the upsert
+    /// response has filled in the ids of brand-new rows via <see cref="RankDiffer.AttachRankIds"/>.
+    /// </summary>
+    private async Task WriteDiffAsync(RankDiffResult diff, CancellationToken cancellationToken)
+    {
+        if (diff.Upserts.Count == 0)
+            return;
+
+        var upserted = await _ranks.UpsertRanksAsync(diff.Upserts, cancellationToken);
+
+        if (diff.HistoryRows.Count == 0)
+            return;
+
+        RankDiffer.AttachRankIds(diff.HistoryRows, upserted);
+        await _ranks.InsertHistoryAsync(diff.HistoryRows, cancellationToken);
     }
 
     private static int? GetIntOverride(JobDataMap dataMap, string key) =>

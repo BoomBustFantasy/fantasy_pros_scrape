@@ -1,0 +1,36 @@
+name: Build and test
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  test:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # BoomBust.* packages live on the private GitHub feed.
+      - name: Add the BoomBustFantasy NuGet feed
+        run: >
+          dotnet nuget add source "https://nuget.pkg.github.com/BoomBustFantasy/index.json"
+          --name github
+          --username "BoomBustFantasy"
+          --password "${{ secrets.NUGET_TOKEN }}"
+          --store-password-in-clear-text
+
+      - name: Restore
+        run: dotnet restore FantasyProsScrape.slnx
+
+      - name: Build
+        run: dotnet build FantasyProsScrape.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test FantasyProsScrape.slnx --no-build -c Release

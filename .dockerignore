@@ -1,0 +1,17 @@
+bin/
+obj/
+logs/
+*.user
+*.suo
+.vs/
+.vscode/
+.claude/
+*.md
+docs/
+.git/
+.github/
+.gitignore
+.env
+.env.*
+nuget.config
+FantasyProsScrape.Tests/

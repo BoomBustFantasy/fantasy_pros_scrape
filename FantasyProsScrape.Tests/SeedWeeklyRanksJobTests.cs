@@ -166,6 +166,40 @@ public class SeedWeeklyRanksJobTests
     }
 
     [Fact]
+    public async Task Execute_SeededRankUsesTheRowsActualRankEcr_NotARecomputedSequentialIndex()
+    {
+        // RB's top-3 slice has gaps in rank_ecr (2, 5, 9) - not a clean 1..N sequence. seeded_rank
+        // must freeze the real FantasyPros value, while `Rank` (the set's own ordering, later
+        // drag-reordered from the admin page) stays the sequential 1..N position within the slice.
+        var gappedRb = new List<FantasyProsRank>
+        {
+            new() { Id = 2001, Season = 2026, Week = 3, PositionId = RbPositionId, Scoring = "PPR", PlayerId = 200, FantasyProsPlayerId = 200, RankEcr = 2 },
+            new() { Id = 2002, Season = 2026, Week = 3, PositionId = RbPositionId, Scoring = "PPR", PlayerId = 201, FantasyProsPlayerId = 201, RankEcr = 5 },
+            new() { Id = 2003, Season = 2026, Week = 3, PositionId = RbPositionId, Scoring = "PPR", PlayerId = 202, FantasyProsPlayerId = 202, RankEcr = 9 }
+        };
+
+        var runs = Runs();
+        var ranks = Ranks();
+        ranks.Setup(r => r.GetTopRanksAsync(2026, 3, RbPositionId, "PPR", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(gappedRb);
+        var weeklyRanks = WeeklyRanks(setExists: false, insertedSetId: 900);
+        var players = Players();
+        var logger = new Mock<ILogger<SeedWeeklyRanksJob>>();
+
+        var job = BuildJob(runs, ranks, weeklyRanks, players, logger);
+
+        await job.Execute(Context().Object);
+
+        weeklyRanks.Verify(w => w.InsertRanksAsync(
+            It.Is<IReadOnlyList<WeeklyRank>>(rows =>
+                rows.Count == 3 && rows.All(r => r.PositionId == RbPositionId)
+                && rows[0].PlayerId == 200 && rows[0].Rank == 1 && rows[0].SeededRank == 2
+                && rows[1].PlayerId == 201 && rows[1].Rank == 2 && rows[1].SeededRank == 5
+                && rows[2].PlayerId == 202 && rows[2].Rank == 3 && rows[2].SeededRank == 9),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Execute_AlreadySeededWeek_IsNoOp_NeverCallsAnyWriteMethod()
     {
         var runs = Runs();

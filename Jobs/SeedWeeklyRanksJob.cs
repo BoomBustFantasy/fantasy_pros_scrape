@@ -17,8 +17,9 @@ namespace FantasyProsScrape.Jobs;
 /// <item>Otherwise insert the set (<c>seeded_at</c> = now, <c>published_at</c> = null).</item>
 /// <item>For each configured position, read the top-N current <c>FantasyProsRanks</c> rows ordered by
 /// <c>rank_ecr</c> (N = the position's cutoff) and insert <c>WeeklyRanks</c> rows with
-/// <c>rank</c> = 1..N in that order; <c>seeded_rank</c> is the same value as <c>rank</c> at seed time,
-/// since these rows are created directly from the current ranked order.</item>
+/// <c>rank</c> = 1..N (the row's position within the set - what the admin page later drag-reorders)
+/// and <c>seeded_rank</c> = the row's actual <c>rank_ecr</c> value, not a recomputed sequential index,
+/// so a gap or tie in FantasyPros' own numbering is preserved rather than silently smoothed out.</item>
 /// <item>Log one summary line with the count seeded per position.</item>
 /// </list>
 /// The admin page in Boom takes it from there (see boom/docs/plans/weekly-ranks.md).
@@ -150,7 +151,7 @@ public class SeedWeeklyRanksJob : IJob
                 PositionId = positionId,
                 PlayerId = rank.PlayerId,
                 Rank = index + 1,
-                SeededRank = index + 1,
+                SeededRank = rank.RankEcr,
                 UpdatedAt = now
             })
             .ToList();

@@ -40,6 +40,26 @@ public class RankRepository : IRankRepository
         return response.Models;
     }
 
+    public async Task<List<FantasyProsRank>> GetTopRanksAsync(
+        int season, int week, long positionId, string scoring, int limit, CancellationToken cancellationToken = default)
+    {
+        var response = await _supabase
+            .From<FantasyProsRank>()
+            .Filter("season", Constants.Operator.Equals, season)
+            .Filter("week", Constants.Operator.Equals, week)
+            .Filter("position_id", Constants.Operator.Equals, positionId)
+            .Filter("scoring", Constants.Operator.Equals, scoring)
+            .Order("rank_ecr", Constants.Ordering.Ascending)
+            .Limit(limit)
+            .Get(cancellationToken);
+
+        _logger.LogDebug(
+            "Loaded top {Count} FantasyProsRanks rows (limit {Limit}) for {Season} wk{Week} pos {PositionId} {Scoring}",
+            response.Models.Count, limit, season, week, positionId, scoring);
+
+        return response.Models;
+    }
+
     public async Task<List<FantasyProsRank>> UpsertRanksAsync(
         IReadOnlyList<FantasyProsRank> rows, CancellationToken cancellationToken = default)
     {

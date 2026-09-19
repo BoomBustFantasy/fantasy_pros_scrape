@@ -54,4 +54,17 @@ public class RunRepository : IRunRepository
             return false;
         }
     }
+
+    public async Task<(int Season, int Week)?> GetMostRecentSeasonWeekAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await _supabase
+            .From<FantasyProsRankRun>()
+            .Select("season,week")
+            .Order("fetched_at", Constants.Ordering.Descending)
+            .Limit(1)
+            .Get(cancellationToken);
+
+        var latest = response.Models.FirstOrDefault();
+        return latest is null ? null : (latest.Season, latest.Week);
+    }
 }

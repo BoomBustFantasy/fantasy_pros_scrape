@@ -88,6 +88,7 @@ try
     builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
     builder.Services.AddScoped<IRankRepository, RankRepository>();
     builder.Services.AddScoped<IRunRepository, RunRepository>();
+    builder.Services.AddScoped<IWeeklyRankRepository, WeeklyRankRepository>();
 
     builder.Services.AddControllers();
     builder.Services.AddHttpClient(); // required by BoomBust.HealthChecks
@@ -114,7 +115,9 @@ try
 
     // Quartz. FantasyProsRanksJob (FEAT-8: resolves, diffs and writes ranks/history/runs) runs
     // hourly Tue-Sat and Sun 00:00-11:00 America/Chicago - the window FantasyPros' week never
-    // straddles (it rolls the week after Monday night). SeedWeeklyRanksJob lands in a later ticket.
+    // straddles (it rolls the week after Monday night). SeedWeeklyRanksJob (FEAT-10) seeds a
+    // WeeklyRankSets row from the current consensus Tuesday night, right after the last hourly
+    // scrape of the old week and before the Tue 00:00 scrape of the new one has a chance to run.
     var chicago = TimeZoneInfo.FindSystemTimeZoneById(
         builder.Configuration["FantasyPros:TimeZone"] ?? "America/Chicago");
 
@@ -137,6 +140,18 @@ try
             .WithIdentity($"{FantasyProsRanksJob.JobName}-sun-trigger")
             .WithCronSchedule("0 0 0-11 ? * SUN", x => x.InTimeZone(chicago))
             .WithDescription("FantasyPros Ranks - hourly Sun 00:00-11:00 (America/Chicago)"));
+
+        var seedJobKey = new JobKey(SeedWeeklyRanksJob.JobName);
+        q.AddJob<SeedWeeklyRanksJob>(opts => opts
+            .WithIdentity(seedJobKey)
+            .DisallowConcurrentExecution()
+            .StoreDurably());
+
+        q.AddTrigger(opts => opts
+            .ForJob(seedJobKey)
+            .WithIdentity($"{SeedWeeklyRanksJob.JobName}-tue-trigger")
+            .WithCronSchedule("0 0 22 ? * TUE", x => x.InTimeZone(chicago))
+            .WithDescription("SeedWeeklyRanksJob - Tuesday 22:00 (America/Chicago)"));
     });
     builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
@@ -205,6 +220,8 @@ try
         fantasyProsSettings.TimeZone);
     Log.Information("  {Job}: hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (writes ranks/history/runs); POST /api/fantasypros/run to trigger on demand",
         FantasyProsRanksJob.JobName);
+    Log.Information("  {Job}: Tuesday 22:00 America/Chicago (seeds WeeklyRankSets/WeeklyRanks from consensus); POST /api/fantasypros/seed/{{season}}/{{week}} to trigger on demand",
+        SeedWeeklyRanksJob.JobName);
     Log.Information("Health check endpoints: /health, /health/live, /health/ready");
 
     await app.RunAsync();

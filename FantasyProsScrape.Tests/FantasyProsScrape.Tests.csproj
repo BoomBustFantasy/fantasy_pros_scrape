@@ -28,6 +28,7 @@
   <ItemGroup>
     <!-- The committed appsettings.json, so the tests pin what ships. -->
     <None Include="..\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="fixtures\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

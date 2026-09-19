@@ -77,6 +77,10 @@ public class PlayerRepository : IPlayerRepository
         {
             // A column-level PATCH rather than a full-row Update, so a concurrent Sleeper/ESPN
             // sync can never be overwritten with the stale values this job read a minute ago.
+            // Unaffected by the typed client's broken id=0 serialization on Insert/Upsert (see
+            // IPostgrestRawWriter): .Set(...) builds the PATCH body from only the columns named in
+            // the .Set(...) calls below, never from the whole model, so Id (default 0 here, since
+            // this method never loads or sets it) is never part of the outgoing payload.
             await _supabase
                 .From<Player>()
                 .Where(p => p.Id == playerId)

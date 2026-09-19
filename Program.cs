@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using BoomBust.HealthChecks;
 using BoomBust.Logging;
 using FantasyProsScrape.Configuration;
@@ -82,6 +83,22 @@ try
             AutoConnectRealtime = false,
             AutoRefreshToken = false
         });
+    });
+
+    // Raw PostgREST writer: RankRepository/RunRepository/WeeklyRankRepository use this instead of
+    // the typed Postgrest client's .Insert(List<T>, ...)/.Upsert(List<T>, ...) for models with an
+    // identity `id` column, which that client serializes with a broken literal `id: 0` (see
+    // Services/IPostgrestRawWriter.cs).
+    builder.Services.AddHttpClient<IPostgrestRawWriter, PostgrestRawWriter>((sp, client) =>
+    {
+        var settings = sp.GetRequiredService<IOptions<SupabaseSettings>>().Value;
+        if (string.IsNullOrWhiteSpace(settings.Url) || string.IsNullOrWhiteSpace(settings.ServiceRoleKey))
+            throw new InvalidOperationException(
+                "Supabase configuration is missing: set the Supabase__Url and Supabase__ServiceRoleKey environment variables (see .env.example). Refusing to start.");
+
+        client.BaseAddress = new Uri(settings.Url.TrimEnd('/') + "/rest/v1/");
+        client.DefaultRequestHeaders.Add("apikey", settings.ServiceRoleKey);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ServiceRoleKey);
     });
 
     // Repositories PlayerResolver / RankDiffer / FantasyProsRanksJob need to read and write.

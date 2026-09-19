@@ -29,7 +29,9 @@ public class RankRepository : IRankRepository
             .From<FantasyProsRank>()
             .Filter("season", Constants.Operator.Equals, season)
             .Filter("week", Constants.Operator.Equals, week)
-            .Filter("position_id", Constants.Operator.Equals, positionId)
+            // Postgrest's Filter(...) only accepts string/int/float/List/Dictionary/FullTextSearchConfig/Range
+            // criterion types (not long) - cast down; position ids are always small (1-5).
+            .Filter("position_id", Constants.Operator.Equals, (int)positionId)
             .Filter("scoring", Constants.Operator.Equals, scoring)
             .Get(cancellationToken);
 
@@ -47,7 +49,9 @@ public class RankRepository : IRankRepository
             .From<FantasyProsRank>()
             .Filter("season", Constants.Operator.Equals, season)
             .Filter("week", Constants.Operator.Equals, week)
-            .Filter("position_id", Constants.Operator.Equals, positionId)
+            // Postgrest's Filter(...) only accepts string/int/float/List/Dictionary/FullTextSearchConfig/Range
+            // criterion types (not long) - cast down; position ids are always small (1-5).
+            .Filter("position_id", Constants.Operator.Equals, (int)positionId)
             .Filter("scoring", Constants.Operator.Equals, scoring)
             .Order("rank_ecr", Constants.Ordering.Ascending)
             .Limit(limit)

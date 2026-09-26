@@ -148,6 +148,13 @@ try
 
         q.AddTrigger(opts => opts
             .ForJob(ranksJobKey)
+            .WithIdentity($"{FantasyProsRanksJob.JobName}-startup-trigger")
+            .StartNow()
+            .WithSimpleSchedule(x => x.WithRepeatCount(0))
+            .WithDescription("FantasyPros Ranks - one-time run on application startup"));
+
+        q.AddTrigger(opts => opts
+            .ForJob(ranksJobKey)
             .WithIdentity($"{FantasyProsRanksJob.JobName}-tue-sat-trigger")
             .WithCronSchedule("0 0 * ? * TUE-SAT", x => x.InTimeZone(chicago))
             .WithDescription("FantasyPros Ranks - hourly Tue-Sat (America/Chicago)"));
@@ -235,7 +242,7 @@ try
         string.Join(", ", fantasyProsSettings.Pages.Select(p => p.Position)),
         fantasyProsSettings.Cutoffs.QB, fantasyProsSettings.Cutoffs.RB, fantasyProsSettings.Cutoffs.WR, fantasyProsSettings.Cutoffs.TE,
         fantasyProsSettings.TimeZone);
-    Log.Information("  {Job}: hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (writes ranks/history/runs); POST /api/fantasypros/run to trigger on demand",
+    Log.Information("  {Job}: once on startup, then hourly Tue-Sat and Sun 00:00-11:00 America/Chicago (writes ranks/history/runs); POST /api/fantasypros/run to trigger on demand",
         FantasyProsRanksJob.JobName);
     Log.Information("  {Job}: Tuesday 22:00 America/Chicago (seeds WeeklyRankSets/WeeklyRanks from consensus); POST /api/fantasypros/seed/{{season}}/{{week}} to trigger on demand",
         SeedWeeklyRanksJob.JobName);

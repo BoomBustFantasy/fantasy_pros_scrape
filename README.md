@@ -12,7 +12,6 @@ It runs as a web app with scheduled background jobs (Quartz.NET), the same shape
 Feature complete through the seed job. The hourly ranks job (Tue 00:00 through Sun 11:00
 America/Chicago) resolves, diffs and writes ranks, history and raw runs; the Tuesday 22:00 seed
 job creates the week's `WeeklyRankSets`. Both can be triggered on demand over HTTP.
-Deployment is via Portainer, see [docs/deploy/portainer.md](docs/deploy/portainer.md).
 
 ## Configuration
 
@@ -47,13 +46,6 @@ docker build --secret id=nuget_token,src=/path/to/token -t jackbruzan/fantasy_pr
 docker run --env-file .env -p 9081:8080 jackbruzan/fantasy_pros_scrape
 ```
 
-## Deploying
-
-`portainer-stack.yml` at the repo root is the Portainer stack: it runs the private
-`jackbruzan/fantasy_pros_scrape:latest` image on host port 9081 and reads every secret from the
-stack's environment variables. Step-by-step instructions, the variable list, verification and
-rollback are in [docs/deploy/portainer.md](docs/deploy/portainer.md).
-
 ## Endpoints
 
 | Endpoint | What it does |
@@ -74,8 +66,6 @@ Controllers/              On-demand run and seed triggers
 Services/                 FantasyProsClient, EcrPageParser, PlayerResolver, RankDiffer, PayloadHasher
 Services/Repositories/    Players, ranks + history, runs, weekly rank sets
 Models/                   Ecr (page blob) and Supa (table rows)
-portainer-stack.yml       Portainer stack definition
-docs/deploy/portainer.md  Deployment guide
 FantasyProsScrape.Tests   xunit tests
 ```
 

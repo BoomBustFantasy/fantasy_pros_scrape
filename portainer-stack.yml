@@ -1,0 +1,68 @@
+# Portainer stack for the FantasyPros ranks scraper.
+#
+# Paste this into Portainer > Stacks > Add stack (name: fantasy-pros-scraper) and set the
+# variables listed in docs/deploy/portainer.md in the stack's "Environment variables" panel.
+# Nothing secret lives in this file; every ${VAR} is substituted by Portainer at deploy time.
+#
+# The variable names match the ones the ESPN scraper's compose file expects, so one set of
+# Portainer variables can serve every scraper if they are ever folded into a single stack.
+
+services:
+  fantasy-pros-scraper:
+    image: jackbruzan/fantasy_pros_scrape:latest
+    container_name: fantasy-pros-scraper
+    restart: unless-stopped
+
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - TZ=America/Chicago
+      # Supabase (service role: the app refuses to start without it)
+      - Supabase__Url=${SUPABASE_URL}
+      - Supabase__ServiceRoleKey=${SUPABASE_SERVICE_ROLE_KEY}
+      # BetterStack log shipping (leave BETTERSTACK_TOKEN empty to log to console/file only)
+      - BetterStack__SourceToken=${BETTERSTACK_TOKEN:-}
+      - BetterStack__Endpoint=${BETTERSTACK_ENDPOINT:-https://in.logs.betterstack.com}
+
+    # 9081 on the host so it does not collide with the other scrapers (ESPN is on 8080,
+    # FantasyCalc on 5146). Only the health endpoints and the two on-demand triggers live here.
+    ports:
+      - "9081:8080"
+
+    # Liveness only. /health/ready also pings Supabase REST, and a short Supabase blip should
+    # not flip the container to unhealthy; check /health/ready by hand or from BetterStack.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+    volumes:
+      - fantasy-pros-scrape-logs:/app/logs
+
+    networks:
+      - fantasy-pros-scrape-network
+
+volumes:
+  fantasy-pros-scrape-logs:
+    driver: local
+
+networks:
+  fantasy-pros-scrape-network:
+    driver: bridge

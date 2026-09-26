@@ -9,8 +9,9 @@ It runs as a web app with scheduled background jobs (Quartz.NET), the same shape
 
 ## Status
 
-Repo skeleton (FEAT-2): host, configuration, health endpoints, typed FantasyPros HTTP client,
-Docker image and CI. No jobs are registered yet; the scrape and seed jobs land in later tickets.
+Feature complete through the seed job. The hourly ranks job (Tue 00:00 through Sun 11:00
+America/Chicago) resolves, diffs and writes ranks, history and raw runs; the Tuesday 22:00 seed
+job creates the week's `WeeklyRankSets`. Both can be triggered on demand over HTTP.
 
 ## Configuration
 
@@ -23,6 +24,7 @@ zone. Secrets come only from environment variables, which override `appsettings.
 | `Supabase__Url` | Project URL |
 | `Supabase__ServiceRoleKey` | Required; the app refuses to start without it |
 | `BetterStack__SourceToken` | Optional log shipping |
+| `BetterStack__Endpoint` | Ingest URL for that source; defaults to `https://in.logs.betterstack.com` |
 
 ## Running It
 
@@ -51,13 +53,19 @@ docker run --env-file .env -p 9081:8080 jackbruzan/fantasy_pros_scrape
 | `GET /health` | Detailed health check (JSON) |
 | `GET /health/live` | Liveness probe |
 | `GET /health/ready` | Readiness: Supabase REST reachable |
+| `POST /api/fantasypros/run` | Trigger the ranks job now; optional `?season=&week=&positions=RB,WR` |
+| `POST /api/fantasypros/seed/{season}/{week}` | Seed the week's rank set now; no-op if it exists |
 
 ## Layout
 
 ```
-Program.cs                Startup, DI, health checks, and (later) the job schedule
+Program.cs                Startup, DI, health checks, Quartz schedules
 Configuration/            SupabaseSettings, FantasyProsSettings
-Services/                 IFantasyProsSource / FantasyProsClient (typed HttpClient)
+Jobs/                     FantasyProsRanksJob (hourly), SeedWeeklyRanksJob (Tuesday night)
+Controllers/              On-demand run and seed triggers
+Services/                 FantasyProsClient, EcrPageParser, PlayerResolver, RankDiffer, PayloadHasher
+Services/Repositories/    Players, ranks + history, runs, weekly rank sets
+Models/                   Ecr (page blob) and Supa (table rows)
 FantasyProsScrape.Tests   xunit tests
 ```
 
